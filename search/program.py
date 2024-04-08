@@ -12,6 +12,7 @@ from typing import Dict, List
 from dataclasses import dataclass
 
 BOARD_N = 11
+INF = 10000000
 
 def generateMoves():
     ROOT_MOVES = [
@@ -74,13 +75,11 @@ def getClearedBoard(
         row_count[cell.r] += 1
         col_count[cell.c] += 1
 
-    returned_board = dict(uncleared_board)
+    return {
+        cell: color for cell, color in uncleared_board.items()
+        if row_count[cell.r] < BOARD_N and col_count[cell.c] < BOARD_N
+    }
 
-    for cell in returned_board:
-        if row_count[cell.r] == BOARD_N or col_count[cell.c] == BOARD_N:
-            del returned_board[cell]
-
-    return returned_board
 
 def getAdjCells(
     cell: Coord
@@ -114,9 +113,7 @@ def apply(
     for cell in place_action.coords:
         returned_board[cell] = PlayerColor.RED
 
-    print(input_board, returned_board)
-
-    return returned_board
+    return getClearedBoard(returned_board)
 
 def toInt(board: dict[Coord, PlayerColor]):
     flattened = ['0'] * (BOARD_N * BOARD_N)
@@ -142,47 +139,69 @@ def intToBoard(board_int: int):
 
     return board
 
+def multisourceBFS(
+    input_board: dict[Coord, PlayerColor],
+    sources: List[Coord],
+    dests: List[Coord]
+):
+    dest_set = set(dests)
+    dist = dict()
+    input_board
+
+    queue = deque()
+    for source in sources:
+        queue.append(source)
+        dist[source] = 0
+
+    while queue:
+        current_cell = queue.popleft()
+
+        # print("current", current_cell)
+
+        if current_cell in dest_set:
+            # print ("final: ", current_cell, dist[current_cell])
+            return dist[current_cell]
+
+        for adj_cell in getAdjCells(current_cell):
+            if adj_cell in dist or getColor(input_board, adj_cell) == PlayerColor.BLUE:
+                continue
+
+            # print(current_cell, " -> ", adj_cell)
+
+            dist[adj_cell] = dist[current_cell] + 1
+            queue.append(adj_cell)
+
+    return INF
 
 def getDistanceToTarget(
     input_board: dict[Coord, PlayerColor],
     target: Coord
 ):
-    INF = 1e20
+    red_cells = [coord for coord, color in input_board.items() if color == PlayerColor.RED]
 
-    dist = dict()
-    board = input_board
+    missing_rows = set([row for row in range(BOARD_N)])
+    missing_cols = set([col for col in range(BOARD_N)])
 
-    queue = deque()
-    queue.append(target)
-    dist[target] = 0
+    for cell in input_board:
+        if cell.r == target.r:
+            missing_cols.remove(cell.c)
+        if cell.c == target.c:
+            missing_rows.remove(cell.r)
 
-    while queue:
-        current_cell = queue.pop()
+    same_row_missing = [Coord(target.r, c) for c in missing_cols]
+    same_col_missing = [Coord(r, target.c) for r in missing_rows]
 
-        adj_cells = [
-            current_cell + Direction.Up,
-            current_cell + Direction.Down,
-            current_cell + Direction.Left,
-            current_cell + Direction.Right
-        ]
+    # print("searching: ")
+    # print("same row missing", same_row_missing)
+    # print("same col missing", same_col_missing)
 
-        for adj_cell in adj_cells:
-            visisted = adj_cell in dist
-            is_blue = adj_cell in board and board[adj_cell] == PlayerColor.BLUE
+    # print("reds: ", red_cells)
 
-            if visisted or is_blue:
-                continue
+    return min(
+        len(same_row_missing) + multisourceBFS(input_board, sources=red_cells, dests=same_row_missing) - 1,
+        len(same_col_missing) + multisourceBFS(input_board, sources=red_cells, dests=same_col_missing) - 1
+    )
 
-            dist[adj_cell] = dist[current_cell] + 1
-            queue.append(adj_cell)
-
-    min_dist = INF
-    for cell in board:
-        for adj_cell in getAdjCells(cell):
-            if getColor(board, adj_cell) == PlayerColor.RED:
-                min_dist = min(min_dist, dist[adj_cell])
-
-    return min_dist
 
 def isTargetCleared(
     input_board: dict[Coord, PlayerColor],
@@ -229,8 +248,13 @@ def search(
         (estimated_solution, current_board_int) = to_be_expanded.get_nowait()
         current_board = intToBoard(current_board_int)
 
-        print(render_board(current_board, target, ansi=False))
 
+        # print (dist[current_board_int], estimated_solution)
+
+        # print(render_board(current_board, target, ansi=False))
+
+        if isTargetCleared(current_board, target):
+            return actions[current_board_int]
 
         for move in MOVES:
             next_board = apply(current_board, move)
@@ -238,19 +262,22 @@ def search(
             if next_board is None:
                 continue
 
-            print (render_board(next_board, target, ansi=False))
-
-            if isTargetCleared(next_board, target):
-                return actions[current_board]
-
             next_board_int = toInt(next_board)
 
             if next_board_int in dist:
                 continue
 
-            dist[next_board_int] = dist[current_board_int] + 1
+            dist[next_board_int] = dist[current_board_int] + 4
             actions[next_board_int] = actions[current_board_int] + [move]
-            estimated_next_board_solution = dist[next_board_int] + getDistanceToTarget(next_board, target) // 4
+
+            if isTargetCleared(next_board, target):
+                estimated_next_board_solution = dist[next_board_int]
+            else:
+                estimated_next_board_solution = dist[next_board_int] + getDistanceToTarget(next_board, target)
+
+            # print ("-----> ", dist[next_board_int], estimated_next_board_solution)
+
+            # print(render_board(next_board, target, ansi=False))
 
             to_be_expanded.put_nowait((estimated_next_board_solution, next_board_int))
 
